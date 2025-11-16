@@ -61,9 +61,15 @@ class SmartRecognizer:
                     print("✓ Voice listener initialized")
                 else:
                     self.voice_listener = None
+                    # Voice listener initialized but not available
+                    if self.tts and self.tts.available:
+                        self.tts.speak("Voice commands are not available.", blocking=False)
             except Exception as e:
                 print(f"⚠️  Voice listener not available: {e}")
                 self.voice_listener = None
+                # TTS is now available, can speak errors
+                if self.tts and self.tts.available:
+                    self.tts.speak("Voice commands are not available.", blocking=False)
 
         # Track what we've asked about recently (to avoid spam)
         self.recently_asked = {}  # {name: timestamp}
@@ -98,7 +104,57 @@ class SmartRecognizer:
             with open(self.database_path, 'w') as f:
                 json.dump(self.database, f, indent=2)
         except Exception as e:
-            print(f"✗ Error saving database: {e}")
+            self._report_error(
+                f"Error saving database: {e}",
+                user_message="I couldn't save that information to my database.",
+                level='error',
+                speak=True
+            )
+
+    def _report_error(self, message, user_message=None, level='warning', speak=True):
+        """
+        Report error via logging AND TTS (if available)
+
+        Args:
+            message: Technical error message for logs
+            user_message: User-friendly message to speak (auto-generated if None)
+            level: 'warning' or 'error'
+            speak: Whether to speak the error to user
+        """
+        # Print to console
+        prefix = '⚠️ ' if level == 'warning' else '✗'
+        print(f"{prefix} {message}")
+
+        # Speak to user if TTS available and enabled
+        if speak and self.tts and self.tts.available:
+            # Use user_message if provided, otherwise make technical message user-friendly
+            if user_message is None:
+                user_message = self._make_user_friendly_error(message)
+
+            try:
+                self.tts.speak(user_message, blocking=False)
+            except Exception as e:
+                print(f"  (Failed to speak error: {e})")
+
+    def _make_user_friendly_error(self, technical_message):
+        """Convert technical error messages to user-friendly speech"""
+        # Map common technical errors to user-friendly messages
+        error_mappings = {
+            'YOLO': 'Object detection',
+            'DeepFace': 'Face recognition',
+            'not available': 'is not available',
+            'Error getting embedding': "I couldn't process that face",
+            'Error saving database': "I couldn't save that information",
+            'Voice listener not available': 'Voice commands are not available',
+            'No response heard': "I didn't hear a response",
+        }
+
+        user_msg = technical_message
+        for tech_term, friendly_term in error_mappings.items():
+            if tech_term in technical_message:
+                user_msg = user_msg.replace(tech_term, friendly_term)
+
+        return user_msg
 
     def detect_and_recognize(self, frame):
         """
@@ -229,118 +285,143 @@ class SmartRecognizer:
 
             # Ask and listen in a separate thread to not block camera processing
             def ask_and_learn():
-                # Natural greeting - ask if they want to connect
-                response = self.voice_listener.ask_and_listen(
-                    self.tts,
-                    "Hello! I haven't met you yet. Would you like to connect?",
-                    timeout=8,
-                    phrase_time_limit=5
-                )
+                """Background thread for voice-based learning - with error boundary"""
+                try:
+                    # Natural greeting - ask if they want to connect
+                    response = self.voice_listener.ask_and_listen(
+                        self.tts,
+                        "Hello! I haven't met you yet. Would you like to connect?",
+                        timeout=8,
+                        phrase_time_limit=5
+                    )
 
-                if response:
-                    response_lower = response.lower().strip()
+                    if response:
+                        response_lower = response.lower().strip()
 
-                    # Check for negative responses
-                    decline_phrases = ['no', 'nope', 'not now', "don't", 'later', 'pass']
+                        # Check for negative responses
+                        decline_phrases = ['no', 'nope', 'not now', "don't", 'later', 'pass']
 
-                    if any(phrase in response_lower for phrase in decline_phrases):
-                        # User declined to connect
-                        print("User declined to connect")
-                        self.tts.speak("No problem! Have a great day.", blocking=False)
+                        if any(phrase in response_lower for phrase in decline_phrases):
+                            # User declined to connect
+                            print("User declined to connect")
+                            self.tts.speak("No problem! Have a great day.", blocking=False)
 
-                        # Add to opt-out list
-                        if 'opt_out' not in self.database:
-                            self.database['opt_out'] = []
-                        self.database['opt_out'].append({
-                            'timestamp': datetime.now().isoformat(),
-                            'note': 'Declined to connect'
-                        })
-                        self._save_database()
-                    else:
-                        # User wants to connect - have a natural conversation
-                        print("User wants to connect - starting conversation")
-                        conversation = {
-                            'timestamp': datetime.now().isoformat(),
-                            'exchanges': []
-                        }
-
-                        # Start conversation - ask for name
-                        name_response = self.voice_listener.ask_and_listen(
-                            self.tts,
-                            "Great! What's your name?",
-                            timeout=8,
-                            phrase_time_limit=5
-                        )
-
-                        if name_response:
-                            name = name_response.strip().title()
-                            conversation['exchanges'].append({
-                                'k1': "What's your name?",
-                                'person': name_response
+                            # Add to opt-out list
+                            if 'opt_out' not in self.database:
+                                self.database['opt_out'] = []
+                            self.database['opt_out'].append({
+                                'timestamp': datetime.now().isoformat(),
+                                'note': 'Declined to connect'
                             })
+                            self._save_database()
+                        else:
+                            # User wants to connect - have a natural conversation
+                            print("User wants to connect - starting conversation")
+                            conversation = {
+                                'timestamp': datetime.now().isoformat(),
+                                'exchanges': []
+                            }
 
-                            print(f"Met new person: {name}")
-
-                            # Natural follow-up
-                            self.tts.speak(f"Nice to meet you, {name}!", blocking=True)
-
-                            # Ask something natural to keep conversation going
-                            interest_response = self.voice_listener.ask_and_listen(
+                            # Start conversation - ask for name
+                            name_response = self.voice_listener.ask_and_listen(
                                 self.tts,
-                                "What brings you here today?",
-                                timeout=10,
-                                phrase_time_limit=8
+                                "Great! What's your name?",
+                                timeout=8,
+                                phrase_time_limit=5
                             )
 
-                            if interest_response:
+                            if name_response:
+                                name = name_response.strip().title()
                                 conversation['exchanges'].append({
-                                    'k1': "What brings you here today?",
-                                    'person': interest_response
+                                    'k1': "What's your name?",
+                                    'person': name_response
                                 })
 
-                                # Acknowledge their response
-                                self.tts.speak("That's great! I'll remember that.", blocking=True)
+                                print(f"Met new person: {name}")
 
-                            # Save the person with conversation
-                            if self.pending_face_img is not None:
-                                # Create person entry with conversation
-                                person_data = {
-                                    'name': name,
-                                    'first_seen': datetime.now().isoformat(),
-                                    'last_seen': datetime.now().isoformat(),
-                                    'times_seen': 1,
-                                    'conversations': [conversation]
-                                }
+                                # Natural follow-up
+                                self.tts.speak(f"Nice to meet you, {name}!", blocking=True)
 
-                                # Add to face recognizer
-                                success = self.face_recognizer.add_person(name, self.pending_face_img)
+                                # Ask something natural to keep conversation going
+                                interest_response = self.voice_listener.ask_and_listen(
+                                    self.tts,
+                                    "What brings you here today?",
+                                    timeout=10,
+                                    phrase_time_limit=8
+                                )
 
-                                if success:
-                                    # Update database with person info
-                                    if name not in self.database['people']:
-                                        self.database['people'][name] = person_data
+                                if interest_response:
+                                    conversation['exchanges'].append({
+                                        'k1': "What brings you here today?",
+                                        'person': interest_response
+                                    })
+
+                                    # Acknowledge their response
+                                    self.tts.speak("That's great! I'll remember that.", blocking=True)
+
+                                # Save the person with conversation
+                                if self.pending_face_img is not None:
+                                    # Create person entry with conversation
+                                    person_data = {
+                                        'name': name,
+                                        'first_seen': datetime.now().isoformat(),
+                                        'last_seen': datetime.now().isoformat(),
+                                        'times_seen': 1,
+                                        'conversations': [conversation]
+                                    }
+
+                                    # Add to face recognizer
+                                    success = self.face_recognizer.add_person(name, self.pending_face_img)
+
+                                    if success:
+                                        # Update database with person info
+                                        if name not in self.database['people']:
+                                            self.database['people'][name] = person_data
+                                        else:
+                                            # Add conversation to existing person
+                                            self.database['people'][name]['conversations'].append(conversation)
+                                            self.database['people'][name]['last_seen'] = datetime.now().isoformat()
+                                            self.database['people'][name]['times_seen'] += 1
+
+                                        self._save_database()
+                                        print(f"✓ Connected with {name}")
+
+                                        # Friendly goodbye
+                                        self.tts.speak(f"Great to meet you, {name}! I'll recognize you next time.", blocking=False)
                                     else:
-                                        # Add conversation to existing person
-                                        self.database['people'][name]['conversations'].append(conversation)
-                                        self.database['people'][name]['last_seen'] = datetime.now().isoformat()
-                                        self.database['people'][name]['times_seen'] += 1
+                                        # Failed to save face - inform user
+                                        self._report_error(
+                                            f"Failed to save face for {name}",
+                                            user_message=f"Sorry {name}, I had trouble saving your face.",
+                                            level='error',
+                                            speak=True
+                                        )
+                            else:
+                                # Didn't get name
+                                self.tts.speak("I didn't catch that. Feel free to say hello anytime!", blocking=False)
+                    else:
+                        print("No response heard, will try again later")
 
-                                    self._save_database()
-                                    print(f"✓ Connected with {name}")
+                    # Reset waiting state
+                    self.waiting_for_name = False
+                    self.pending_face_img = None
 
-                                    # Friendly goodbye
-                                    self.tts.speak(f"Great to meet you, {name}! I'll recognize you next time.", blocking=False)
-                                else:
-                                    print(f"✗ Failed to save face for {name}")
-                        else:
-                            # Didn't get name
-                            self.tts.speak("I didn't catch that. Feel free to say hello anytime!", blocking=False)
-                else:
-                    print("No response heard, will try again later")
+                except Exception as e:
+                    # Error boundary: catch any exceptions in voice learning thread
+                    print(f"✗ Error in voice learning thread: {type(e).__name__}: {e}")
+                    import traceback
+                    traceback.print_exc()
 
-                # Reset waiting state
-                self.waiting_for_name = False
-                self.pending_face_img = None
+                    # Try to inform user if TTS is available
+                    if self.tts and self.tts.available:
+                        try:
+                            self.tts.speak("Sorry, I encountered an error during our conversation.", blocking=False)
+                        except:
+                            pass  # TTS failed, nothing we can do
+
+                    # Always reset waiting state even on error
+                    self.waiting_for_name = False
+                    self.pending_face_img = None
 
             # Start in background thread
             threading.Thread(target=ask_and_learn, daemon=True).start()
@@ -455,13 +536,26 @@ class SmartRecognizer:
 class SmartRecognitionNode(Node):
     """ROS2 node for smart recognition"""
 
-    def __init__(self, recognizer: SmartRecognizer):
+    def __init__(self, recognizer: SmartRecognizer, frame_skip=2, max_resolution=640):
+        """
+        Initialize recognition node
+
+        Args:
+            recognizer: SmartRecognizer instance
+            frame_skip: Process every Nth frame (2 = process 50%, 3 = process 33%)
+            max_resolution: Maximum width for processing (reduces GPU load on Jetson)
+        """
         super().__init__('smart_recognition_node')
 
         self.bridge = CvBridge()
         self.recognizer = recognizer
         self.latest_frame = None
         self.latest_detections = []
+
+        # Jetson optimization parameters
+        self.frame_skip = frame_skip
+        self.max_resolution = max_resolution
+        self.frame_skip_counter = 0
 
         # Performance tracking
         self.fps = 0
@@ -507,9 +601,19 @@ class SmartRecognitionNode(Node):
             self.last_fps_time = current_time
 
     def camera_callback(self, msg):
-        """Process camera frames"""
+        """Process camera frames with Jetson optimizations"""
         try:
+            # Frame skipping for Jetson performance
+            self.frame_skip_counter += 1
+            if self.frame_skip_counter % self.frame_skip != 0:
+                return  # Skip this frame to reduce GPU load
+
             frame = self.convert_nv12_to_bgr(msg)
+
+            # Resize large frames for Jetson optimization
+            if frame.shape[1] > self.max_resolution:
+                scale = self.max_resolution / frame.shape[1]
+                frame = cv2.resize(frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_LINEAR)
 
             # Learning mode: capture face for person
             if self.learning_mode and self.learning_name:
@@ -547,6 +651,13 @@ class SmartRecognitionNode(Node):
 
         except Exception as e:
             self.get_logger().error(f'Error processing frame: {str(e)}')
+            # Inform user verbally
+            self.recognizer._report_error(
+                f"Camera processing error: {e}",
+                user_message="I'm having trouble processing the camera feed.",
+                level='error',
+                speak=True
+            )
 
     def start_learning(self, name):
         """Start learning a person's name"""
@@ -853,6 +964,9 @@ def main():
     parser.add_argument('--database', type=str, default='smart_database.json')
     parser.add_argument('--host', type=str, default='0.0.0.0')
     parser.add_argument('--port', type=int, default=8080)
+    # Jetson optimization parameters
+    parser.add_argument('--frame-skip', type=int, default=2, help='Process every Nth frame (default: 2, higher = faster)')
+    parser.add_argument('--max-resolution', type=int, default=640, help='Maximum frame width for processing (default: 640)')
 
     args = parser.parse_args()
 
@@ -887,7 +1001,11 @@ def main():
 
     # Initialize ROS2
     rclpy.init()
-    camera_node = SmartRecognitionNode(recognizer=recognizer)
+    camera_node = SmartRecognitionNode(
+        recognizer=recognizer,
+        frame_skip=args.frame_skip,
+        max_resolution=args.max_resolution
+    )
     SmartRecognitionHTTPHandler.camera_node = camera_node
 
     # Start ROS2
