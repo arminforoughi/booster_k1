@@ -86,9 +86,9 @@ class SmartRecognizer:
     def _create_empty_database(self):
         """Create empty database structure"""
         return {
-            'people': {},      # {name: {first_seen, last_seen, times_seen}}
+            'people': {},      # {name: {first_seen, last_seen, times_seen, conversations: []}}
             'objects': {},     # {name: {class, first_seen, last_seen, times_seen}}
-            'opt_out': [],     # List of people who asked not to be remembered
+            'opt_out': [],     # List of people who didn't want to connect
             'version': '1.0'
         }
 
@@ -122,8 +122,15 @@ class SmartRecognizer:
                     name = "Unknown Person"
                     self._handle_unknown_person(face_img, (x, y, w, h))
                 else:
-                    # Known person, update database
+                    # Known person, update database and greet
                     self._update_person(name)
+
+                    # Greet if we haven't greeted them recently
+                    greet_key = f"greeted_{name}"
+                    if greet_key not in self.recently_asked:
+                        self.greet_known_person(name)
+                        # Don't greet again for a while
+                        self.recently_asked[greet_key] = time.time()
 
                 detections.append({
                     'type': 'person',
@@ -222,76 +229,114 @@ class SmartRecognizer:
 
             # Ask and listen in a separate thread to not block camera processing
             def ask_and_learn():
+                # Natural greeting - ask if they want to connect
                 response = self.voice_listener.ask_and_listen(
                     self.tts,
-                    "I see someone I don't recognize. Who is this?",
-                    timeout=5,
+                    "Hello! I haven't met you yet. Would you like to connect?",
+                    timeout=8,
                     phrase_time_limit=5
                 )
 
                 if response:
-                    # Check if they want to opt out
                     response_lower = response.lower().strip()
-                    opt_out_phrases = ['no one', 'nobody', 'dont remember', "don't remember",
-                                      'forget me', 'private', 'anonymous', 'guest']
 
-                    if any(phrase in response_lower for phrase in opt_out_phrases):
-                        # User wants to opt out
-                        print("User opted out of being remembered")
-                        self.tts.speak("Understood. I won't remember you.", blocking=False)
+                    # Check for negative responses
+                    decline_phrases = ['no', 'nope', 'not now', "don't", 'later', 'pass']
 
-                        # Add to opt-out list (using a timestamp as identifier)
+                    if any(phrase in response_lower for phrase in decline_phrases):
+                        # User declined to connect
+                        print("User declined to connect")
+                        self.tts.speak("No problem! Have a great day.", blocking=False)
+
+                        # Add to opt-out list
                         if 'opt_out' not in self.database:
                             self.database['opt_out'] = []
                         self.database['opt_out'].append({
                             'timestamp': datetime.now().isoformat(),
-                            'note': 'User requested not to be remembered'
+                            'note': 'Declined to connect'
                         })
                         self._save_database()
                     else:
-                        # Clean up the name (capitalize first letter)
-                        name = response.strip().title()
-                        print(f"Learning new person: {name}")
+                        # User wants to connect - have a natural conversation
+                        print("User wants to connect - starting conversation")
+                        conversation = {
+                            'timestamp': datetime.now().isoformat(),
+                            'exchanges': []
+                        }
 
-                        # Ask if they want to be remembered
-                        confirm_response = self.voice_listener.ask_and_listen(
+                        # Start conversation - ask for name
+                        name_response = self.voice_listener.ask_and_listen(
                             self.tts,
-                            f"Nice to meet you, {name}. Would you like me to remember you?",
-                            timeout=5,
-                            phrase_time_limit=3
+                            "Great! What's your name?",
+                            timeout=8,
+                            phrase_time_limit=5
                         )
 
-                        if confirm_response:
-                            confirm_lower = confirm_response.lower().strip()
-                            # Check for negative responses
-                            if any(word in confirm_lower for word in ['no', 'nope', "don't", 'not']):
-                                print(f"{name} opted out of being remembered")
-                                self.tts.speak("Okay, I won't remember you.", blocking=False)
+                        if name_response:
+                            name = name_response.strip().title()
+                            conversation['exchanges'].append({
+                                'k1': "What's your name?",
+                                'person': name_response
+                            })
 
-                                # Add to opt-out list
-                                if 'opt_out' not in self.database:
-                                    self.database['opt_out'] = []
-                                self.database['opt_out'].append({
-                                    'name': name,
-                                    'timestamp': datetime.now().isoformat()
+                            print(f"Met new person: {name}")
+
+                            # Natural follow-up
+                            self.tts.speak(f"Nice to meet you, {name}!", blocking=True)
+
+                            # Ask something natural to keep conversation going
+                            interest_response = self.voice_listener.ask_and_listen(
+                                self.tts,
+                                "What brings you here today?",
+                                timeout=10,
+                                phrase_time_limit=8
+                            )
+
+                            if interest_response:
+                                conversation['exchanges'].append({
+                                    'k1': "What brings you here today?",
+                                    'person': interest_response
                                 })
-                                self._save_database()
-                            else:
-                                # Learn the person
-                                if self.pending_face_img is not None:
-                                    success = self.learn_person(name, self.pending_face_img)
-                                    if success:
-                                        print(f"✓ Learned {name}")
-                                    else:
-                                        print(f"✗ Failed to learn {name}")
-                        else:
-                            # No response to confirmation, assume yes
+
+                                # Acknowledge their response
+                                self.tts.speak("That's great! I'll remember that.", blocking=True)
+
+                            # Save the person with conversation
                             if self.pending_face_img is not None:
-                                success = self.learn_person(name, self.pending_face_img)
+                                # Create person entry with conversation
+                                person_data = {
+                                    'name': name,
+                                    'first_seen': datetime.now().isoformat(),
+                                    'last_seen': datetime.now().isoformat(),
+                                    'times_seen': 1,
+                                    'conversations': [conversation]
+                                }
+
+                                # Add to face recognizer
+                                success = self.face_recognizer.add_person(name, self.pending_face_img)
+
                                 if success:
-                                    print(f"✓ Learned {name}")
+                                    # Update database with person info
+                                    if name not in self.database['people']:
+                                        self.database['people'][name] = person_data
+                                    else:
+                                        # Add conversation to existing person
+                                        self.database['people'][name]['conversations'].append(conversation)
+                                        self.database['people'][name]['last_seen'] = datetime.now().isoformat()
+                                        self.database['people'][name]['times_seen'] += 1
+
+                                    self._save_database()
+                                    print(f"✓ Connected with {name}")
+
+                                    # Friendly goodbye
+                                    self.tts.speak(f"Great to meet you, {name}! I'll recognize you next time.", blocking=False)
+                                else:
+                                    print(f"✗ Failed to save face for {name}")
+                        else:
+                            # Didn't get name
+                            self.tts.speak("I didn't catch that. Feel free to say hello anytime!", blocking=False)
                 else:
-                    print("No response heard, will ask again later")
+                    print("No response heard, will try again later")
 
                 # Reset waiting state
                 self.waiting_for_name = False
@@ -361,10 +406,34 @@ class SmartRecognizer:
         """Teach the system a person's name"""
         if self.face_recognizer.add_person(name, face_img):
             self._update_person(name)
-            if self.tts and self.tts.available:
-                self.tts.speak(f"Nice to meet you, {name}!")
             return True
         return False
+
+    def greet_known_person(self, name):
+        """Greet a person K1 already knows with context from past conversations"""
+        if not self.tts or not self.tts.available:
+            return
+
+        # Get person info from database
+        person_info = self.database.get('people', {}).get(name)
+
+        if person_info and 'conversations' in person_info and len(person_info['conversations']) > 0:
+            # Get last conversation
+            last_convo = person_info['conversations'][-1]
+            times_seen = person_info.get('times_seen', 1)
+
+            # Greet with context
+            if times_seen == 1:
+                greeting = f"Hello again, {name}!"
+            elif times_seen < 5:
+                greeting = f"Hey {name}, good to see you!"
+            else:
+                greeting = f"Welcome back, {name}!"
+
+            self.tts.speak(greeting, blocking=False)
+        else:
+            # Simple greeting if no conversation history
+            self.tts.speak(f"Hello, {name}!", blocking=False)
 
     def name_object(self, class_name, custom_name):
         """Give an object a custom name"""
