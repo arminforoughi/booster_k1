@@ -88,6 +88,7 @@ class SmartRecognizer:
         return {
             'people': {},      # {name: {first_seen, last_seen, times_seen}}
             'objects': {},     # {name: {class, first_seen, last_seen, times_seen}}
+            'opt_out': [],     # List of people who asked not to be remembered
             'version': '1.0'
         }
 
@@ -229,17 +230,66 @@ class SmartRecognizer:
                 )
 
                 if response:
-                    # Clean up the name (capitalize first letter)
-                    name = response.strip().title()
-                    print(f"Learning new person: {name}")
+                    # Check if they want to opt out
+                    response_lower = response.lower().strip()
+                    opt_out_phrases = ['no one', 'nobody', 'dont remember', "don't remember",
+                                      'forget me', 'private', 'anonymous', 'guest']
 
-                    # Learn the person
-                    if self.pending_face_img is not None:
-                        success = self.learn_person(name, self.pending_face_img)
-                        if success:
-                            print(f"✓ Learned {name}")
+                    if any(phrase in response_lower for phrase in opt_out_phrases):
+                        # User wants to opt out
+                        print("User opted out of being remembered")
+                        self.tts.speak("Understood. I won't remember you.", blocking=False)
+
+                        # Add to opt-out list (using a timestamp as identifier)
+                        if 'opt_out' not in self.database:
+                            self.database['opt_out'] = []
+                        self.database['opt_out'].append({
+                            'timestamp': datetime.now().isoformat(),
+                            'note': 'User requested not to be remembered'
+                        })
+                        self._save_database()
+                    else:
+                        # Clean up the name (capitalize first letter)
+                        name = response.strip().title()
+                        print(f"Learning new person: {name}")
+
+                        # Ask if they want to be remembered
+                        confirm_response = self.voice_listener.ask_and_listen(
+                            self.tts,
+                            f"Nice to meet you, {name}. Would you like me to remember you?",
+                            timeout=5,
+                            phrase_time_limit=3
+                        )
+
+                        if confirm_response:
+                            confirm_lower = confirm_response.lower().strip()
+                            # Check for negative responses
+                            if any(word in confirm_lower for word in ['no', 'nope', "don't", 'not']):
+                                print(f"{name} opted out of being remembered")
+                                self.tts.speak("Okay, I won't remember you.", blocking=False)
+
+                                # Add to opt-out list
+                                if 'opt_out' not in self.database:
+                                    self.database['opt_out'] = []
+                                self.database['opt_out'].append({
+                                    'name': name,
+                                    'timestamp': datetime.now().isoformat()
+                                })
+                                self._save_database()
+                            else:
+                                # Learn the person
+                                if self.pending_face_img is not None:
+                                    success = self.learn_person(name, self.pending_face_img)
+                                    if success:
+                                        print(f"✓ Learned {name}")
+                                    else:
+                                        print(f"✗ Failed to learn {name}")
                         else:
-                            print(f"✗ Failed to learn {name}")
+                            # No response to confirmation, assume yes
+                            if self.pending_face_img is not None:
+                                success = self.learn_person(name, self.pending_face_img)
+                                if success:
+                                    print(f"✓ Learned {name}")
                 else:
                     print("No response heard, will ask again later")
 
