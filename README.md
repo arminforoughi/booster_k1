@@ -47,12 +47,16 @@ python src/smart_recognition.py
 - Object naming database
 - Web interface at: http://192.168.88.153:8080
 
-**Usage:**
-1. When K1 sees an unknown person, it asks "Who is this?"
-2. **Say your name out loud** - K1 listens and learns automatically!
-3. Alternatively, use web interface to teach names
-4. Name objects through the web UI
-5. K1 remembers everyone and everything!
+**Natural Conversation Flow:**
+1. When K1 sees someone new, it asks "Would you like to connect?"
+2. Say "yes" → K1 has a natural conversation:
+   - "What's your name?"
+   - "What brings you here today?"
+   - Records the full conversation
+3. Next time → K1 recognizes you and greets with context!
+   - "Hey Sarah, good to see you!"
+4. Privacy: Say "no" → K1 respects your privacy
+5. Web interface available as backup for manual teaching
 
 **Soft auto-start (ask permission before starting):**
 ```bash
