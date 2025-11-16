@@ -224,14 +224,24 @@ class TextToSpeech:
                     pass
 
     def _speak_espeak(self, text):
-        """Speak using espeak"""
-        # Escape single quotes
-        text = text.replace("'", "'\\''")
-
+        """Speak using espeak - SAFE from command injection"""
         # Add speed control
         speed_param = int(175 * self.voice_speed)  # espeak default is 175
 
-        os.system(f"espeak -s {speed_param} '{text}' 2>/dev/null")
+        # Use subprocess.run instead of os.system - NO INJECTION RISK
+        # Arguments are passed as list, not shell command
+        try:
+            subprocess.run(
+                ['espeak', '-s', str(speed_param), text],
+                stderr=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                timeout=10,
+                check=False
+            )
+        except subprocess.TimeoutExpired:
+            print("⚠️  espeak timeout")
+        except Exception as e:
+            print(f"⚠️  espeak error: {e}")
 
     def _speak_pyttsx3(self, text):
         """Speak using pyttsx3"""

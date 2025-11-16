@@ -17,6 +17,8 @@ import argparse
 import time
 import json
 import os
+import tempfile
+import shutil
 from datetime import datetime
 
 # Import our modules
@@ -99,11 +101,45 @@ class SmartRecognizer:
         }
 
     def _save_database(self):
-        """Save database to file"""
+        """Save database to file with atomic write and backup protection"""
         try:
-            with open(self.database_path, 'w') as f:
-                json.dump(self.database, f, indent=2)
+            # Create temp file in same directory as database (ensures same filesystem)
+            db_dir = os.path.dirname(self.database_path) or '.'
+            fd, temp_path = tempfile.mkstemp(suffix='.json', dir=db_dir, text=True)
+
+            try:
+                # Write to temp file
+                with os.fdopen(fd, 'w') as f:
+                    json.dump(self.database, f, indent=2)
+            except Exception:
+                # Clean up temp file on write failure
+                try:
+                    os.unlink(temp_path)
+                except:
+                    pass
+                raise
+
+            # Create backup of existing database
+            if os.path.exists(self.database_path):
+                backup_path = self.database_path + '.backup'
+                try:
+                    shutil.copy2(self.database_path, backup_path)
+                except Exception as e:
+                    print(f"⚠️  Could not create backup: {e}")
+
+            # Atomic move (replaces old file)
+            shutil.move(temp_path, self.database_path)
+
         except Exception as e:
+            # Try to restore from backup if save failed
+            backup_path = self.database_path + '.backup'
+            if os.path.exists(backup_path):
+                try:
+                    shutil.copy2(backup_path, self.database_path)
+                    print("✓ Restored database from backup")
+                except:
+                    pass
+
             self._report_error(
                 f"Error saving database: {e}",
                 user_message="I couldn't save that information to my database.",

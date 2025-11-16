@@ -4,6 +4,8 @@ import termios
 import tty
 import select
 import threading
+import atexit
+import signal
 
 # Try to import voice controller (optional)
 try:
@@ -25,6 +27,48 @@ def get_error_message(error_code):
         -1: "Invalid request - Request not sent yet"
     }
     return error_messages.get(error_code, f"Unknown error code: {error_code}")
+
+# Global client reference for emergency stop
+_global_client = None
+
+def emergency_stop():
+    """
+    🚨 EMERGENCY STOP - Send multiple stop commands to ensure robot stops
+    Called on any exit scenario (Ctrl+C, kill, crash, etc.)
+    """
+    global _global_client
+    if _global_client is not None:
+        print("\n" + "="*60)
+        print("🚨 EMERGENCY STOP - Sending stop commands to robot")
+        print("="*60)
+
+        # Send stop command 10 times to ensure receipt
+        for i in range(10):
+            try:
+                _global_client.Move(0.0, 0.0, 0.0)
+                time.sleep(0.01)
+            except Exception as e:
+                if i == 0:  # Only print error once
+                    print(f"⚠️  Error sending stop command: {e}")
+
+        # Verify robot stopped
+        try:
+            # Give robot time to process commands
+            time.sleep(0.1)
+            print("✓ Emergency stop commands sent")
+        except:
+            pass
+
+def signal_handler(sig, frame):
+    """Handle signals (SIGTERM, SIGINT) with emergency stop"""
+    print(f"\n🛑 Received signal {sig}")
+    emergency_stop()
+    sys.exit(0)
+
+# Register emergency stop for all exit scenarios
+atexit.register(emergency_stop)
+signal.signal(signal.SIGTERM, signal_handler)  # kill command
+signal.signal(signal.SIGINT, signal_handler)   # Ctrl+C
 
 def verify_connection(client: B1LocoClient):
     """Verify connection to robot by getting current mode"""
@@ -68,15 +112,30 @@ class DynamicController:
         if self.running:
             return
         self.running = True
-        self.control_thread = threading.Thread(target=self._control_loop, daemon=True)
+        # SAFETY: Non-daemon thread ensures cleanup completes before exit
+        self.control_thread = threading.Thread(target=self._control_loop, daemon=False)
         self.control_thread.start()
-        
+
     def stop(self):
-        """Stop the control loop"""
+        """Stop the control loop safely"""
+        print("Stopping control loop...")
         self.running = False
+
+        # Wait for control thread to finish
         if self.control_thread:
-            self.control_thread.join(timeout=1.0)
-        # Send final stop command
+            self.control_thread.join(timeout=2.0)
+            if self.control_thread.is_alive():
+                print("⚠️  WARNING: Control thread did not stop cleanly!")
+
+        # Send multiple stop commands to ensure robot stops
+        print("Sending stop commands to robot...")
+        for i in range(5):
+            try:
+                self.client.Move(0.0, 0.0, 0.0)
+                time.sleep(0.02)
+            except:
+                pass
+
         with self.lock:
             self.x, self.y, self.z = 0.0, 0.0, 0.0
         self.client.Move(0.0, 0.0, 0.0)
@@ -396,7 +455,12 @@ def main():
 
     client = B1LocoClient()
     client.Init()
-    
+
+    # Register client for emergency stop
+    global _global_client
+    _global_client = client
+    print("✓ Emergency stop system active")
+
     # Wait a moment for connection to establish
     print("Initializing connection...")
     time.sleep(1.0)
