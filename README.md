@@ -61,11 +61,18 @@ python src/smart_recognition.py --no-voice
 
 **Installation:**
 ```bash
-# Install dependencies
+# Install Python dependencies
 pip install -r requirements.txt
 
-# Install espeak for TTS
+# Install TTS (choose one):
+
+# Option A: Piper TTS (RECOMMENDED - neural voice, ARM-optimized)
+bash install_piper.sh
+
+# Option B: espeak (fallback - robotic but always works)
 sudo apt-get install espeak
+
+# Note: System auto-detects and uses best available TTS
 ```
 
 ## Features

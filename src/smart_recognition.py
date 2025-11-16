@@ -47,10 +47,10 @@ class SmartRecognizer:
         # Initialize face recognizer
         self.face_recognizer = FaceRecognizer(use_deepface=use_deepface)
 
-        # Initialize TTS
+        # Initialize TTS with auto-detection (tries Piper -> espeak -> pyttsx3)
         self.tts = None
         if use_tts:
-            self.tts = TextToSpeech(engine='espeak')
+            self.tts = TextToSpeech(engine='auto')
 
         # Initialize Voice Listener
         self.voice_listener = None
