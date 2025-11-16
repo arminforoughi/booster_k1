@@ -42,9 +42,9 @@ python src/smart_recognition.py
 **Features:**
 - YOLO object detection
 - Face recognition with DeepFace
-- Text-to-Speech (asks "Who is this?" for unknown people)
-- **Voice learning - K1 listens to your answer and learns names!**
-- Object naming database
+- Natural conversation with TTS (asks "Would you like to connect?")
+- **Voice learning with conversation recording**
+- Person/object database with conversation history
 - Web interface at: http://192.168.88.153:8080
 
 **Natural Conversation Flow:**
