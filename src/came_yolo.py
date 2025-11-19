@@ -16,28 +16,48 @@ import argparse
 import time
 
 class YOLODetector:
-    """YOLO detector wrapper"""
+    """YOLO detector wrapper with 3D depth support"""
 
-    def __init__(self, model_type='yolov8n', detection_type='face', confidence=0.5):
+    def __init__(self, model_type='yolov8n', detection_type='face', confidence=0.5, use_tensorrt=False):
         self.detection_type = detection_type
         self.confidence = confidence
         self.model = None
+        self.detections_3d = []  # Store 3D object positions
 
         try:
             from ultralytics import YOLO
 
+            # Try TensorRT first for Jetson optimization
+            model_path = f'{model_type}.engine' if use_tensorrt else f'{model_type}.pt'
+
             if detection_type == 'face':
                 # Use YOLOv8 face detection model
-                print("Loading YOLOv8 face detection model...")
+                print(f"Loading YOLOv8 face detection model ({model_path})...")
                 # You can download a face-specific model or use general detection
                 # For now, we'll use person detection as a proxy
-                self.model = YOLO(f'{model_type}.pt')
+                try:
+                    self.model = YOLO(model_path)
+                    print(f"✓ Loaded TensorRT model: {model_path}" if use_tensorrt else f"✓ Loaded PyTorch model: {model_path}")
+                except:
+                    if use_tensorrt:
+                        print(f"⚠️  TensorRT model not found, falling back to PyTorch")
+                        self.model = YOLO(f'{model_type}.pt')
+                    else:
+                        raise
                 self.target_classes = [0]  # Person class
                 print("Note: Using person detection. For better face detection, install a face-specific YOLO model")
             else:
                 # General object detection
-                print(f"Loading {model_type} model...")
-                self.model = YOLO(f'{model_type}.pt')
+                print(f"Loading {model_type} model ({model_path})...")
+                try:
+                    self.model = YOLO(model_path)
+                    print(f"✓ Loaded TensorRT model: {model_path}" if use_tensorrt else f"✓ Loaded PyTorch model: {model_path}")
+                except:
+                    if use_tensorrt:
+                        print(f"⚠️  TensorRT model not found, falling back to PyTorch")
+                        self.model = YOLO(f'{model_type}.pt')
+                    else:
+                        raise
                 self.target_classes = None  # All classes
 
             print("Model loaded successfully!")
@@ -62,8 +82,8 @@ class YOLODetector:
             cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
             self.face_cascade = cv2.CascadeClassifier(cascade_path)
 
-    def detect(self, frame):
-        """Run detection on frame and return annotated image"""
+    def detect(self, frame, depth_frame=None):
+        """Run detection on frame and return annotated image with optional 3D positions"""
         if self.available and self.model is not None:
             # YOLO detection
             results = self.model(frame, conf=self.confidence, verbose=False)
@@ -71,7 +91,61 @@ class YOLODetector:
             # Draw results on frame
             annotated_frame = results[0].plot()
 
+            # If depth is available, calculate 3D positions
+            if depth_frame is not None:
+                self.detections_3d = []
+                boxes = results[0].boxes
+                for box in boxes:
+                    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                    # Get center of bounding box
+                    center_x = int((x1 + x2) / 2)
+                    center_y = int((y1 + y2) / 2)
+
+                    # Get depth at center (in mm for ZED camera)
+                    if 0 <= center_y < depth_frame.shape[0] and 0 <= center_x < depth_frame.shape[1]:
+                        depth_mm = depth_frame[center_y, center_x]
+                        depth_m = depth_mm / 1000.0  # Convert to meters
+
+                        # Store 3D detection
+                        class_id = int(box.cls[0])
+                        confidence = float(box.conf[0])
+                        self.detections_3d.append({
+                            'class_id': class_id,
+                            'class_name': self.model.names[class_id] if hasattr(self.model, 'names') else f'class_{class_id}',
+                            'confidence': confidence,
+                            'bbox': (int(x1), int(y1), int(x2), int(y2)),
+                            'center_2d': (center_x, center_y),
+                            'depth_m': depth_m,
+                            '3d_position': self._pixel_to_3d(center_x, center_y, depth_m)
+                        })
+
+                        # Draw depth on frame
+                        if depth_m > 0 and depth_m < 20:  # Reasonable depth range
+                            cv2.putText(annotated_frame, f'{depth_m:.2f}m',
+                                      (int(x1), int(y1) - 30),
+                                      cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+
             return annotated_frame
+
+    def _pixel_to_3d(self, u, v, depth):
+        """Convert pixel coordinates and depth to 3D position (camera frame)
+        Assumes standard pinhole camera model - update with actual camera calibration"""
+        # TODO: Get these from /camera/camera_info topic
+        fx = 700.0  # Focal length X (placeholder - get from camera_info)
+        fy = 700.0  # Focal length Y
+        cx = 640.0  # Principal point X (image center)
+        cy = 360.0  # Principal point Y
+
+        # Convert to 3D coordinates (meters)
+        x = (u - cx) * depth / fx
+        y = (v - cy) * depth / fy
+        z = depth
+
+        return (x, y, z)
+
+    def get_detections_3d(self):
+        """Return list of 3D detections"""
+        return self.detections_3d
         else:
             # OpenCV face detection fallback
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -91,17 +165,19 @@ class YOLODetector:
 
 
 class CameraSubscriber(Node):
-    """ROS2 node that subscribes to camera and runs detection"""
+    """ROS2 node that subscribes to camera and runs detection with depth"""
 
-    def __init__(self, detector, show_stereo=False, process_right=False):
+    def __init__(self, detector, show_stereo=False, process_right=False, use_depth=True):
         super().__init__('camera_yolo_detector')
 
         self.bridge = CvBridge()
         self.detector = detector
         self.latest_left_frame = None
         self.latest_right_frame = None
+        self.latest_depth_frame = None
         self.show_stereo = show_stereo
         self.process_right = process_right
+        self.use_depth = use_depth
 
         # Performance tracking
         self.fps = 0
@@ -111,10 +187,13 @@ class CameraSubscriber(Node):
         # Use booster camera bridge topics
         left_topic = '/booster_camera_bridge/image_left_raw'
         right_topic = '/booster_camera_bridge/image_right_raw'
+        depth_topic = '/booster_camera_bridge/depth_raw'
 
         self.get_logger().info(f'Left camera topic: {left_topic}')
         if show_stereo:
             self.get_logger().info(f'Right camera topic: {right_topic}')
+        if use_depth:
+            self.get_logger().info(f'Depth topic: {depth_topic}')
 
         # Subscribe to left camera
         self.left_subscription = self.create_subscription(
@@ -130,6 +209,15 @@ class CameraSubscriber(Node):
                 Image,
                 right_topic,
                 self.right_callback,
+                10
+            )
+
+        # Subscribe to depth if requested
+        if use_depth:
+            self.depth_subscription = self.create_subscription(
+                Image,
+                depth_topic,
+                self.depth_callback,
                 10
             )
 
@@ -156,14 +244,30 @@ class CameraSubscriber(Node):
             self.frame_count = 0
             self.last_fps_time = current_time
 
+    def depth_callback(self, msg):
+        """Callback for depth image messages"""
+        try:
+            # Depth is typically mono16 or 32FC1
+            if msg.encoding == '32FC1':
+                depth_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='passthrough')
+            elif msg.encoding == '16UC1':
+                depth_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='passthrough')
+            else:
+                depth_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='passthrough')
+
+            self.latest_depth_frame = depth_image
+
+        except Exception as e:
+            self.get_logger().error(f'Error processing depth image: {str(e)}')
+
     def left_callback(self, msg):
         """Callback for left camera image messages"""
         try:
             # Convert to BGR
             cv_image = self.convert_nv12_to_bgr(msg)
 
-            # Run detection
-            detected_frame = self.detector.detect(cv_image)
+            # Run detection with depth if available
+            detected_frame = self.detector.detect(cv_image, self.latest_depth_frame)
 
             # Update FPS
             self.update_fps()
@@ -171,6 +275,12 @@ class CameraSubscriber(Node):
             # Add FPS counter
             cv2.putText(detected_frame, f'FPS: {self.fps:.1f}', (10, 60),
                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+
+            # Add 3D detection count
+            detections_3d = self.detector.get_detections_3d()
+            if detections_3d:
+                cv2.putText(detected_frame, f'3D Objects: {len(detections_3d)}', (10, 90),
+                           cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
 
             self.latest_left_frame = detected_frame
 
@@ -333,7 +443,7 @@ def spin_ros(node):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='YOLO detection on camera feed')
+    parser = argparse.ArgumentParser(description='YOLO detection on camera feed with 3D depth')
     parser.add_argument('--model', type=str, default='yolov8n',
                        choices=['yolov8n', 'yolov8s', 'yolov8m', 'yolov8l', 'yolov8x'],
                        help='YOLO model size (n=nano, s=small, m=medium, l=large, x=xlarge)')
@@ -342,6 +452,12 @@ def main():
                        help='Detection type: face or general object detection')
     parser.add_argument('--confidence', type=float, default=0.5,
                        help='Confidence threshold (0.0-1.0)')
+    parser.add_argument('--tensorrt', action='store_true',
+                       help='Use TensorRT model (.engine) for faster inference on Jetson')
+    parser.add_argument('--depth', action='store_true', default=True,
+                       help='Enable 3D depth integration (default: enabled)')
+    parser.add_argument('--no-depth', action='store_false', dest='depth',
+                       help='Disable 3D depth integration')
     parser.add_argument('--stereo', action='store_true',
                        help='Show both cameras')
     parser.add_argument('--process-right', action='store_true',
@@ -354,14 +470,15 @@ def main():
     args = parser.parse_args()
 
     print(f'\n{"="*60}')
-    print(f'YOLO Detection Camera Viewer')
+    print(f'YOLO Detection Camera Viewer with 3D Depth')
     print(f'{"="*60}')
 
     # Initialize detector
     detector = YOLODetector(
         model_type=args.model,
         detection_type=args.detection,
-        confidence=args.confidence
+        confidence=args.confidence,
+        use_tensorrt=args.tensorrt
     )
 
     # Initialize ROS2
@@ -371,7 +488,8 @@ def main():
     camera_node = CameraSubscriber(
         detector=detector,
         show_stereo=args.stereo,
-        process_right=args.process_right
+        process_right=args.process_right,
+        use_depth=args.depth
     )
 
     # Set the camera node for the HTTP handler
@@ -386,8 +504,9 @@ def main():
     httpd = HTTPServer(server_address, CameraHTTPHandler)
 
     print(f'Detection type: {args.detection}')
-    print(f'Model: {args.model}')
+    print(f'Model: {args.model}{"(TensorRT)" if args.tensorrt else "(PyTorch)"}')
     print(f'Confidence threshold: {args.confidence}')
+    print(f'3D Depth: {"Enabled" if args.depth else "Disabled"}')
     print(f'Web server: http://{args.host}:{args.port}')
     print(f'\nOpen this URL in your browser to view the detection feed')
     print(f'Press Ctrl+C to stop')
