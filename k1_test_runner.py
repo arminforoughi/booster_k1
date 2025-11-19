@@ -134,7 +134,7 @@ class K1TestRunner:
         input("Press Enter when robot is in DAMPING mode...")
         
         # Run basic_controls.py briefly to test connection
-        test_cmd = f"""cd {ROBOT_PATH} && timeout 3 python3 src/basic_controls.py eth0 2>&1 | head -20"""
+        test_cmd = f"""cd {ROBOT_PATH} && timeout 3 python3 src/basic_controls.py 2>&1 | head -20"""
         success, stdout, stderr = self.run_ssh_command(test_cmd, timeout=10)
         
         # Check for expected outputs
@@ -191,7 +191,7 @@ else:
         
         # Test Ctrl+C emergency stop
         print("\n📍 Testing Ctrl+C emergency stop...")
-        test_cmd = f"""cd {ROBOT_PATH} && timeout 2 python3 src/basic_controls.py eth0 2>&1"""
+        test_cmd = f"""cd {ROBOT_PATH} && timeout 2 python3 src/basic_controls.py 2>&1"""
         success, stdout, stderr = self.run_ssh_command(test_cmd, timeout=5)
         
         emergency_triggered = "EMERGENCY STOP" in stdout or "Emergency stop commands sent" in stdout
@@ -255,7 +255,7 @@ else:
             print("3. Run Phase 5: Motor Test (HIGH RISK)")
             print("   ssh booster@192.168.88.153")
             print("   cd booster_k1")
-            print("   python3 src/basic_controls.py eth0")
+            print("   python3 src/basic_controls.py")
             print("   Then type 'mp' to enter Prepare mode")
         else:
             print("\n⚠️  Some tests failed - review before proceeding")

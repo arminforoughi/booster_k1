@@ -447,11 +447,14 @@ def hand_ok(client: B1LocoClient):
         print(f"Ok hand failed: error = {res}")
 
 def main():
-    if len(sys.argv) < 2:
-        print(f"Usage: {sys.argv[0]} networkInterface")
-        sys.exit(-1)
+    # Use localhost for K1 SDK communication (daemon runs locally on robot)
+    network_interface = '127.0.0.1'
 
-    ChannelFactory.Instance().Init(0, sys.argv[1])
+    # Accept optional command-line arg for backwards compatibility
+    if len(sys.argv) >= 2:
+        network_interface = sys.argv[1]
+
+    ChannelFactory.Instance().Init(0, network_interface)
 
     client = B1LocoClient()
     client.Init()
@@ -479,8 +482,8 @@ def main():
         print("\n⚠️  WARNING: Could not verify connection to robot.")
         print("   Please check:")
         print("   1. Robot is powered on")
-        print("   2. Network interface 'eth0' is correct")
-        print("   3. Robot and computer are on the same network")
+        print("   2. K1 SDK daemon is running")
+        print("   3. Network interface is accessible (using localhost)")
         print("   4. Robot is ready to accept commands")
         print("\n   You can still try commands, but they may timeout.")
     

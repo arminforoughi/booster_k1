@@ -42,7 +42,7 @@ def get_robot_mode():
     cmd = f"""cd {ROBOT_PATH} && python3 -c "
 from booster_robotics_sdk_python import B1LocoClient, ChannelFactory, GetModeResponse, RobotMode
 import sys
-ChannelFactory.Instance().Init(0, 'eth0')
+ChannelFactory.Instance().Init(0, '127.0.0.1')
 client = B1LocoClient()
 client.Init()
 gm = GetModeResponse()
@@ -115,7 +115,7 @@ def main():
         response = input("Return to Damping mode? (yes/no): ")
         if response.lower() == 'yes':
             print("Switching to Damping mode...")
-            cmd = f"cd {ROBOT_PATH} && timeout 5 python3 -c \"from booster_robotics_sdk_python import *; import sys; ChannelFactory.Instance().Init(0, 'eth0'); client = B1LocoClient(); client.Init(); client.ChangeMode(RobotMode.kDamping); print('Mode changed')\""
+            cmd = f"cd {ROBOT_PATH} && timeout 5 python3 -c \"from booster_robotics_sdk_python import *; import sys; ChannelFactory.Instance().Init(0, '127.0.0.1'); client = B1LocoClient(); client.Init(); client.ChangeMode(RobotMode.kDamping); print('Mode changed')\""
             ssh_cmd(cmd)
             time.sleep(2)
     
@@ -124,7 +124,7 @@ def main():
     print("Testing basic_controls.py...")
     print("This will verify emergency stop system is active")
     
-    cmd = f"cd {ROBOT_PATH} && timeout 3 python3 src/basic_controls.py eth0 2>&1 | head -20"
+    cmd = f"cd {ROBOT_PATH} && timeout 3 python3 src/basic_controls.py 127.0.0.1 2>&1 | head -20"
     success, stdout, stderr = ssh_cmd(cmd, timeout=10)
     
     if "Emergency stop system active" in stdout:
@@ -152,7 +152,7 @@ def main():
             cmd = f"""cd {ROBOT_PATH} && python3 -c "
 from booster_robotics_sdk_python import *
 import sys, time
-ChannelFactory.Instance().Init(0, 'eth0')
+ChannelFactory.Instance().Init(0, '127.0.0.1')
 client = B1LocoClient()
 client.Init()
 print('Changing to Prepare mode...')
@@ -170,7 +170,7 @@ time.sleep(3)
         cmd = f"""cd {ROBOT_PATH} && python3 -c "
 from booster_robotics_sdk_python import *
 import sys, time
-ChannelFactory.Instance().Init(0, 'eth0')
+ChannelFactory.Instance().Init(0, '127.0.0.1')
 client = B1LocoClient()
 client.Init()
 print('Changing to Damping mode...')
@@ -198,7 +198,7 @@ print(f'Result: {{res}}')
         print("\nFor movement test, you should:")
         print("1. SSH into robot: sshpass -p '123456' ssh booster@192.168.88.153")
         print("2. cd /home/booster/booster_k1")
-        print("3. python3 src/basic_controls.py eth0")
+        print("3. python3 src/basic_controls.py")
         print("4. Type 'mp' for Prepare mode (stand)")
         print("5. Type 'mw' for Walking mode")
         print("6. Use WASD keys for movement")

@@ -11,7 +11,7 @@ ssh booster@192.168.88.153
 
 ### 1. Basic Robot Controls
 ```bash
-python src/basic_controls.py eth0
+python src/basic_controls.py
 ```
 - Keyboard control (WASD + QE for rotation)
 - Hand gestures (rock, paper, scissors, grasp, OK)

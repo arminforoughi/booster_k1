@@ -41,8 +41,8 @@
 
 - [ ] **1.1** K1 robot is powered ON
 - [ ] **1.2** K1 robot is in DAMPING mode (motors off)
-- [ ] **1.3** Network interface is correct (usually `eth0`)
-- [ ] **1.4** Computer and K1 are on same network
+- [ ] **1.3** K1 SDK daemon is running (uses localhost `127.0.0.1`)
+- [ ] **1.4** Robot is accessible via SSH (for remote control)
 - [ ] **1.5** Can ping K1 robot: `ping <robot-ip>`
 - [ ] **1.6** Physical emergency stop button is accessible
 - [ ] **1.7** Clear space around robot (2+ meters)
@@ -62,7 +62,7 @@
 #### Test 1: Basic Connection
 ```bash
 # Should connect and show robot mode
-python src/basic_controls.py eth0
+python src/basic_controls.py
 # Verify:
 # - "✓ Emergency stop system active" message appears
 # - "✓ Connection successful! Current robot mode: Damping"
@@ -130,7 +130,7 @@ EOF
 
 **Procedure:**
 ```bash
-python src/basic_controls.py eth0
+python src/basic_controls.py
 
 # In the program:
 # 1. Type 'mp' - Change to Prepare mode
