@@ -46,7 +46,28 @@ python src/came_yolo.py
 ./convert_yolo_to_tensorrt.sh
 ```
 
-### 4. Smart Recognition System with Voice Learning (NEW! 🎯)
+### 4. Wave Greeter Bot 👋 🆕
+```bash
+python src/wave_greeter.py
+```
+- **Detects hand waves** using MediaPipe or motion detection
+- **Recognizes people** and remembers them
+- **Personalized greetings** based on how many times you've waved
+- **TTS responses** with context from past interactions
+- Web interface at: http://192.168.88.153:8080
+
+**Features:**
+- First wave: "Hello John! Great to meet you!"
+- 5th wave: "Hey John! You're becoming a regular!"
+- 20th wave: "Hey John! You're one of my favorite people!"
+- Unknown person: "Hello! I don't think we've met yet. I'm K1!"
+
+**Install MediaPipe (optional, for better accuracy):**
+```bash
+pip install mediapipe
+```
+
+### 5. Smart Recognition System with Voice Learning 🎯
 ```bash
 python src/smart_recognition.py
 ```
@@ -113,6 +134,8 @@ sudo apt-get install espeak
 - ✅ Real-time depth mapping from ZED stereo camera
 
 **Intelligence & Interaction:**
+- ✅ **Wave detection greeter bot** 👋 🆕
+- ✅ **Personalized greetings** based on interaction history 🆕
 - ✅ Text-to-Speech interaction
 - ✅ Voice recognition and learning
 - ✅ Person/object database
